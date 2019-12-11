@@ -6,47 +6,54 @@
 	using Sitecore.Diagnostics;
 	using Sitecore.Globalization;
 	using Sitecore.Web.UI.Sheer;
+	using System;
 
 	public class PageItemHandler
 	{
 		public void RemapToRelativeDataSourses(ClientPipelineArgs args)
 		{
-			Assert.ArgumentNotNull((object)args, nameof(args));
-			var database = Factory.GetDatabase(args.Parameters["database"]);
-			var id = args.Parameters["id"];
-			if (!Language.TryParse(args.Parameters["language"], out var language)) language = Context.Language;
-			var copyName = args.Parameters["name"];
-			var original = database.GetItem(ID.Parse(id), language);
-			
-			if (original == null)
+			try
 			{
-				SheerResponse.Alert("Item not found.");
-				args.AbortPipeline();
+				Assert.ArgumentNotNull((object) args, nameof(args));
+				var database = Factory.GetDatabase(args.Parameters["database"]);
+				var id = args.Parameters["id"];
+				if (!Language.TryParse(args.Parameters["language"], out var language)) language = Context.Language;
+				var copyName = args.Parameters["name"];
+				var original = database.GetItem(ID.Parse(id), language);
 
-			}
-			else
-			{
-				var parent = original.Parent;
-				if (parent == null)
+				if (original == null)
 				{
+					SheerResponse.Alert("Item not found.");
 					args.AbortPipeline();
+
 				}
 				else
 				{
-					var copy = database.GetItem(parent.Paths.FullPath + "/" + copyName, language);
-
-					if (copy == null)
+					var parent = original.Parent;
+					if (parent == null)
 					{
 						args.AbortPipeline();
 					}
 					else
 					{
-						ItemCopyingService.ConfiguredInstance.RemapToRelativeDataSources(original, copy);
+						var copy = database.GetItem(parent.Paths.FullPath + "/" + copyName, language);
+
+						if (copy == null)
+						{
+							args.AbortPipeline();
+						}
+						else
+						{
+							ItemCopyingService.ConfiguredInstance.RemapToRelativeDataSources(original, copy);
+						}
 					}
+
 				}
-			
+			}
+			catch (Exception ex)
+			{
+				Log.Error("Error re-mapping data sources on <uiDuplicateItem> pipeline", ex, this);
 			}
 		}
-
 	}
 }
