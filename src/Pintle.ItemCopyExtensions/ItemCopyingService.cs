@@ -9,6 +9,11 @@
 	using Sitecore.Data;
 	using Sitecore.Data.Items;
 	using Sitecore.Diagnostics;
+	using System.Security.Cryptography;
+	using System.Text;
+	using Sitecore.Layouts;
+	using Sitecore.Rules;
+	using Sitecore.Rules.ConditionalRenderings;
 
 	public class ItemCopyingService
 	{
@@ -23,6 +28,8 @@
 			this.RemapSharedLayout = remapSharedLayout.Equals("true", StringComparison.InvariantCultureIgnoreCase);
 			this.RemapFinalLayout = remapFinalLayout.Equals("true", StringComparison.InvariantCultureIgnoreCase);
 		}
+
+		#region configuration
 
 		public void AddModuleTemplate(string key, System.Xml.XmlNode node)
 		{
@@ -41,6 +48,8 @@
 		protected ICollection<Guid> PageModuleTemplates = new List<Guid>();
 
 		public static ItemCopyingService ConfiguredInstance => Factory.CreateObject("pintle/feature/itemCopyExtensions/itemCopyingService", true) as ItemCopyingService;
+
+		#endregion
 
 		public void RemapToRelativeDataSources(Item original, Item copy)
 		{
@@ -135,14 +144,14 @@
 				if (original == null || copy == null) return;
 				if (original.Versions.Count == 0 || copy.Versions.Count == 0) return;
 
-				var originalDataSourses = original.GetDataSoursesForLayout(layoutFieldId);
+				var originalDataSourses = this.GetDataSoursesForLayout(original, layoutFieldId);
 				var layoutRawField = copy[layoutFieldId];
-
+				var datasourceMap = this.GetRelativeDatasourceMap(original, copy);
 				foreach (var originalDatasource in originalDataSourses)
 				{
 					if (this.IsRelativeDatasource(originalDatasource, original))
 					{
-						var copiedRelativeDatasource = this.GetCopiedRelativeDatasource(originalDatasource, original, copy);
+						var copiedRelativeDatasource = this.GetCopiedRelativeDatasource(originalDatasource, original, copy, datasourceMap);
 						if (!string.IsNullOrWhiteSpace(copiedRelativeDatasource))
 						{
 							layoutRawField = layoutRawField.Replace(originalDatasource, copiedRelativeDatasource);
@@ -161,12 +170,12 @@
 			}
 		}
 
-		protected virtual string GetCopiedRelativeDatasource(string originalDatasource, Item original, Item copy)
+		protected virtual string GetCopiedRelativeDatasource(string originalDatasource, Item original, Item copy, IDictionary<Guid, Item> childMap)
 		{
 			var dsItem = original.Database.GetItem(originalDatasource, original.Language);
-			if (dsItem != null)
+			if (dsItem != null && childMap.ContainsKey(dsItem.ID.Guid))
 			{
-				var newDsItem = original.Database.GetItem(dsItem.Paths.FullPath.Replace(original.Paths.FullPath, copy.Paths.FullPath), original.Language);
+				var newDsItem = childMap[dsItem.ID.Guid];
 
 				if (newDsItem != null)
 				{
@@ -175,6 +184,51 @@
 			}
 
 			return string.Empty;
+		}
+
+		protected IDictionary<Guid, Item> GetRelativeDatasourceMap(Item original, Item copy)
+		{
+			var map = new Dictionary<Guid, Item>();
+
+			var originalChildren = original.GetChildrenReccursively();
+			var copyChildren = copy.GetChildrenReccursively().ToDictionary(this.GetItemHash, v => v);
+
+			foreach (var child in originalChildren)
+			{
+				var childHash = this.GetItemHash(child);
+
+				if (copyChildren.ContainsKey(childHash)) map.Add(child.ID.Guid, copyChildren[childHash]);
+			}
+
+			return map;
+		}
+
+		protected virtual string GetItemHash(Item item)
+		{
+			var hash = new StringBuilder(item.Name);
+			hash.Append(item.TemplateID.Guid.ToString());
+			hash.Append(item.Version.Number);
+			hash.Append(item.Appearance.Sortorder);
+
+			foreach (var field in item.Fields.Where(x => !x.Name.StartsWith("__")))
+			{
+				hash.Append(field.Value);
+			}
+
+			using (var algo = new MD5CryptoServiceProvider())
+			{
+				var hashString = GenerateHashString(algo, hash.ToString());
+				return hashString;
+			}
+		}
+
+		private static string GenerateHashString(HashAlgorithm algo, string text)
+		{
+			algo.ComputeHash(Encoding.UTF8.GetBytes(text));
+			var result = algo.Hash;
+			return string.Join(
+				string.Empty,
+				result.Select(x => x.ToString("x2")));
 		}
 
 		protected virtual bool IsRelativeDatasource(string originalDatasource, Item original)
@@ -187,5 +241,47 @@
 
 			return false;
 		}
+
+		protected virtual IEnumerable<string> GetDataSoursesForLayout(Item pageItem, ID layoutFieldId)
+		{
+			if (pageItem == null) return Enumerable.Empty<string>();
+
+			var datasourses = new List<string>();
+
+			var renderings = pageItem
+				                 .GetLayoutDefinition(layoutFieldId)?
+				                 .Devices?
+				                 .ToArray()?
+				                 .Select(x => (DeviceDefinition)x)?
+				                 .SelectMany(d => d.Renderings.Cast<RenderingDefinition>())?
+				                 .ToArray()
+			                 ?? new RenderingDefinition[0];
+
+			foreach (var rendering in renderings)
+			{
+				datasourses.Add(rendering.Datasource);
+
+				if (rendering.Rules != null && rendering.Rules.HasElements)
+				{
+					var rules = RuleFactory.ParseRules<ConditionalRenderingsRuleContext>(pageItem.Database, rendering.Rules);
+					var actions = rules.Rules?
+						.SelectMany(x => x.Actions)
+						.Select(x => x as SetDataSourceAction<ConditionalRenderingsRuleContext>)
+						.Where(x => x != null)
+						.ToArray();
+
+					foreach (var action in actions ?? Enumerable.Empty<SetDataSourceAction<ConditionalRenderingsRuleContext>>())
+					{
+						datasourses.Add(action.DataSource);
+					}
+				}
+			}
+
+			return datasourses
+				.Where(x => !string.IsNullOrWhiteSpace(x))
+				.Distinct()
+				.ToList();
+		}
+
 	}
 }

@@ -73,47 +73,6 @@
 			return itemTemplate != null && (itemTemplate.ID == templateItem.ID || itemTemplate.DescendsFrom(templateItem.ID));
 		}
 
-		internal static IEnumerable<string> GetDataSoursesForLayout(this Item pageItem, ID layoutFieldId)
-		{
-			if (pageItem == null) return Enumerable.Empty<string>();
-
-			var datasourses = new List<string>();
-
-			var renderings = pageItem
-				                 .GetLayoutDefinition(layoutFieldId)?
-								 .Devices?
-				                 .ToArray()?
-				                 .Select(x => (DeviceDefinition)x)?
-								 .SelectMany(d => d.Renderings.Cast<RenderingDefinition>())?
-				                 .ToArray()
-			                 ?? new RenderingDefinition[0];
-
-			foreach (var rendering in renderings)
-			{
-				datasourses.Add(rendering.Datasource);
-
-				if (rendering.Rules != null && rendering.Rules.HasElements)
-				{
-					var rules = RuleFactory.ParseRules<ConditionalRenderingsRuleContext>(pageItem.Database, rendering.Rules);
-					var actions = rules.Rules?
-						.SelectMany(x => x.Actions)
-						.Select(x => x as SetDataSourceAction<ConditionalRenderingsRuleContext>)
-						.Where(x => x != null)
-						.ToArray();
-
-					foreach (var action in actions ?? Enumerable.Empty<SetDataSourceAction<ConditionalRenderingsRuleContext>>())
-					{
-						datasourses.Add(action.DataSource);
-					}
-				}
-			}
-
-			return datasourses
-				.Where(x => !string.IsNullOrWhiteSpace(x))
-				.Distinct()
-				.ToList();
-		}
-		
 		internal static LayoutDefinition GetLayoutDefinition(this Item item, ID layoutFieldId)
 		{
 			var layoutField = LayoutField.GetFieldValue(item.Fields[layoutFieldId]);
