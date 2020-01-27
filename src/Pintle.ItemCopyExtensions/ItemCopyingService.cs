@@ -191,13 +191,30 @@
 			var map = new Dictionary<Guid, Item>();
 
 			var originalChildren = original.GetChildrenReccursively();
-			var copyChildren = copy.GetChildrenReccursively().ToDictionary(this.GetItemHash, v => v);
+			var copiedChildren = new Dictionary<string, Item>();
+
+			foreach (var copiedChild in copy.GetChildrenReccursively())
+			{
+				var hash = this.GetItemHash(copiedChild);
+				if (!copiedChildren.ContainsKey(hash))
+				{
+					copiedChildren.Add(hash, copiedChild);
+				}
+				else
+				{
+					var duplicate1 = copiedChildren[hash];
+					var duplicate2 = copiedChild;
+				}
+			}
 
 			foreach (var child in originalChildren)
 			{
 				var childHash = this.GetItemHash(child);
 
-				if (copyChildren.ContainsKey(childHash)) map.Add(child.ID.Guid, copyChildren[childHash]);
+				if (copiedChildren.ContainsKey(childHash) && !map.ContainsKey(child.ID.Guid))
+				{
+					map.Add(child.ID.Guid, copiedChildren[childHash]);
+				}
 			}
 
 			return map;
@@ -209,8 +226,9 @@
 			hash.Append(item.TemplateID.Guid.ToString());
 			hash.Append(item.Version.Number);
 			hash.Append(item.Appearance.Sortorder);
+			hash.Append(item.Statistics.Created.ToString("s"));
 
-			foreach (var field in item.Fields.Where(x => !x.Name.StartsWith("__")))
+			foreach (var field in item.Fields.Where(x => !x.Name.StartsWith("__")).OrderBy(x => x.Name))
 			{
 				hash.Append(field.Value);
 			}
